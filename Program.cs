@@ -1,28 +1,61 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Configuration;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace TimeSync_FromHttpDateHeader
 {
     internal class Program
     {
+        private static Mutex _mutex;
+
         static int Main(string[] args)
         {
+            bool createdNew;
+            _mutex = new Mutex(true, "Global\\TimeSync_FromHttpDateHeader", out createdNew);
+
+            if (!createdNew)
+            {
+                // มี instance อื่นรันอยู่แล้ว
+                Console.WriteLine("❌ TimeSync is already running.");
+                return 1;
+            }
+
+            try
+            {
+                return RunMain(args);
+            }
+            finally
+            {
+                // ปล่อย Mutex ตอนโปรแกรมจบ
+                _mutex.ReleaseMutex();
+            }
+        }
+
+        static int RunMain(string[] args)
+        {
+            // บังคับ TLS1.2 สำหรับ .NET Framework 4.7
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
 
             var ignoreCert = GetBool("IgnoreSslErrors", true);
             var timeoutSec = GetInt("HttpTimeoutSec", 12);
-            var useHeadThenGet = GetBool("UseHeadThenGet", true);
-            var runOnce = GetBool("RunOnce", true); 
-            var loopIntervalMin = GetInt("LoopIntervalMinutes", 1);
+            var useHeadThenGet = GetBool("UseHeadThenGet", true);   // ถ้าไม่ใส่ใน config ค่านี้จะเป็น false
+            var runOnce = GetBool("RunOnce", true);          // ถ้าไม่ใส่ใน config จะ RunOnce เป็นค่าเริ่มต้น
+            var loopIntervalMin = GetInt("LoopIntervalMinutes", 1);  // ใช้เฉพาะโหมด loop
 
             var targets = BuildCandidateUrls();
-            
+            if (targets.Count == 0)
+            {
+                LogError("No target URLs configured. Please set TimeUrls/TimeHosts/TimePorts.");
+                return 2;
+            }
+
             if (runOnce)
             {
                 try
@@ -35,6 +68,7 @@ namespace TimeSync_FromHttpDateHeader
                 }
                 catch (Exception ex)
                 {
+                    LogError("RunOnce failed", ex);
                     Console.Error.WriteLine("❌ " + ex.Message);
                     if (ex.InnerException != null) Console.Error.WriteLine("Inner: " + ex.InnerException.Message);
                     return 1;
@@ -54,6 +88,7 @@ namespace TimeSync_FromHttpDateHeader
                     }
                     catch (Exception ex)
                     {
+                        LogError("Loop iteration failed", ex);
                         Console.Error.WriteLine($"[{DateTime.Now:HH:mm:ss}] ❌ Error: {ex.Message}");
                         if (ex.InnerException != null)
                             Console.Error.WriteLine("   Inner: " + ex.InnerException.Message);
@@ -63,8 +98,6 @@ namespace TimeSync_FromHttpDateHeader
                 }
             }
         }
-
-
 
         static List<string> BuildCandidateUrls()
         {
@@ -124,9 +157,10 @@ namespace TimeSync_FromHttpDateHeader
             {
                 foreach (var url in urls)
                 {
-                    Console.WriteLine($"Try: {url}");
                     try
                     {
+                        Console.WriteLine($"Try: {url}");
+
                         // HEAD ก่อน
                         if (headThenGet)
                         {
@@ -147,6 +181,8 @@ namespace TimeSync_FromHttpDateHeader
                     }
                     catch (Exception ex)
                     {
+                        // ✅ เขียน log เมื่อ "ติดต่อ URL นี้ไม่ได้" หรือ error ใด ๆ ระหว่างดึงเวลา
+                        LogError($"Target failed: {url}", ex);
                         Console.WriteLine($"  -> {ex.GetType().Name}: {ex.Message}");
                         if (ex.InnerException != null)
                             Console.WriteLine($"     Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
@@ -167,8 +203,37 @@ namespace TimeSync_FromHttpDateHeader
 
         static bool GetBool(string key, bool def)
             => bool.TryParse(ConfigurationManager.AppSettings[key], out var b) ? b : def;
+
         static int GetInt(string key, int def)
             => int.TryParse(ConfigurationManager.AppSettings[key], out var n) ? n : def;
+
+        // ---- Logging: เฉพาะ error/ต่อไม่ได้, แยกไฟล์รายวันในโฟลเดอร์ ./log ข้าง .exe ----
+        static void LogError(string message, Exception ex = null)
+        {
+            try
+            {
+                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                var logDir = Path.Combine(baseDir, "log");
+                Directory.CreateDirectory(logDir);
+
+                var logFile = Path.Combine(logDir, $"timesync_{DateTime.Now:yyyyMMdd}.log");
+
+                using (var sw = new StreamWriter(logFile, true))
+                {
+                    sw.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ❌ {message}");
+                    if (ex != null)
+                    {
+                        sw.WriteLine($"   Error: {ex.Message}");
+                        if (ex.InnerException != null)
+                            sw.WriteLine($"   Inner: {ex.InnerException.Message}");
+                    }
+                }
+            }
+            catch
+            {
+                // เงียบไว้ ถ้าเขียน log ไม่ได้
+            }
+        }
 
         // ---- ตั้งเวลา Windows (UTC) ----
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -196,6 +261,8 @@ namespace TimeSync_FromHttpDateHeader
             if (!SetSystemTime(ref st))
             {
                 int err = Marshal.GetLastWin32Error();
+                // ✅ ล็อกเมื่อ SetSystemTime ล้มเหลว
+                LogError($"SetSystemTime failed. Win32Error={err}");
                 throw new InvalidOperationException($"SetSystemTime failed. Win32Error={err}");
             }
         }
