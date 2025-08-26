@@ -13,40 +13,58 @@ namespace TimeSync_FromHttpDateHeader
     {
         static int Main(string[] args)
         {
-            try
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+
+            var ignoreCert = GetBool("IgnoreSslErrors", true);
+            var timeoutSec = GetInt("HttpTimeoutSec", 12);
+            var useHeadThenGet = GetBool("UseHeadThenGet", true);
+            var runOnce = GetBool("RunOnce", true); 
+            var loopIntervalMin = GetInt("LoopIntervalMinutes", 1);
+
+            var targets = BuildCandidateUrls();
+            
+            if (runOnce)
             {
-                // บังคับ TLS1.2 สำหรับ .NET Framework 4.7
-                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-
-                var ignoreCert = GetBool("IgnoreSslErrors", true);
-                var timeoutSec = GetInt("HttpTimeoutSec", 12);
-                var useHeadThenGet = GetBool("UseHeadThenGet", true);
-
-                // 1) สร้างรายการเป้าหมายแบบครบชุด
-                var targets = BuildCandidateUrls();
-
-                Console.WriteLine("Targets to try (in order):");
-                foreach (var u in targets) Console.WriteLine(" - " + u);
-
-                // 2) ไล่ยิงทีละเป้าหมายจนกว่าจะได้เวลา
-                var dt = FetchFirstServerTime(targets, ignoreCert, TimeSpan.FromSeconds(timeoutSec), useHeadThenGet)
-                         .GetAwaiter().GetResult();
-
-                Console.WriteLine("Server time (UTC): " + dt.ToUniversalTime().ToString("o"));
-
-                // 3) ตั้งเวลา Windows (ต้อง Run as Administrator)
-                SetWindowsTimeUtc(dt);
-
-                Console.WriteLine("✅ Windows time set to (local): " + dt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"));
-                return 0;
+                try
+                {
+                    var dt = FetchFirstServerTime(targets, ignoreCert, TimeSpan.FromSeconds(timeoutSec), useHeadThenGet)
+                             .GetAwaiter().GetResult();
+                    SetWindowsTimeUtc(dt);
+                    Console.WriteLine($"✅ Windows time set to (local): {dt.ToLocalTime():yyyy-MM-dd HH:mm:ss}");
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("❌ " + ex.Message);
+                    if (ex.InnerException != null) Console.Error.WriteLine("Inner: " + ex.InnerException.Message);
+                    return 1;
+                }
             }
-            catch (Exception ex)
+            else
             {
-                Console.Error.WriteLine("❌ " + ex.Message);
-                if (ex.InnerException != null) Console.Error.WriteLine("Inner: " + ex.InnerException.Message);
-                return 1;
+                Console.WriteLine($"=== TimeSync started (loop every {loopIntervalMin} minute(s)) ===");
+                while (true)
+                {
+                    try
+                    {
+                        var dt = FetchFirstServerTime(targets, ignoreCert, TimeSpan.FromSeconds(timeoutSec), useHeadThenGet)
+                                 .GetAwaiter().GetResult();
+                        SetWindowsTimeUtc(dt);
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] ✅ Synced Windows time to: {dt.ToLocalTime():yyyy-MM-dd HH:mm:ss}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[{DateTime.Now:HH:mm:ss}] ❌ Error: {ex.Message}");
+                        if (ex.InnerException != null)
+                            Console.Error.WriteLine("   Inner: " + ex.InnerException.Message);
+                    }
+
+                    System.Threading.Thread.Sleep(TimeSpan.FromMinutes(loopIntervalMin));
+                }
             }
         }
+
+
 
         static List<string> BuildCandidateUrls()
         {
