@@ -68,7 +68,7 @@ namespace TimeSync_FromHttpDateHeader
                 }
                 catch (Exception ex)
                 {
-                    LogError("RunOnce failed", ex);
+                    //LogError("RunOnce failed", ex);
                     Console.Error.WriteLine("❌ " + ex.Message);
                     if (ex.InnerException != null) Console.Error.WriteLine("Inner: " + ex.InnerException.Message);
                     return 1;
@@ -88,7 +88,7 @@ namespace TimeSync_FromHttpDateHeader
                     }
                     catch (Exception ex)
                     {
-                        LogError("Loop iteration failed", ex);
+                        //LogError("Loop iteration failed", ex);
                         Console.Error.WriteLine($"[{DateTime.Now:HH:mm:ss}] ❌ Error: {ex.Message}");
                         if (ex.InnerException != null)
                             Console.Error.WriteLine("   Inner: " + ex.InnerException.Message);
@@ -220,18 +220,18 @@ namespace TimeSync_FromHttpDateHeader
 
                 using (var sw = new StreamWriter(logFile, true))
                 {
-                    sw.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ❌ {message}");
+                    sw.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}");
                     if (ex != null)
                     {
-                        sw.WriteLine($"   Error: {ex.Message}");
-                        if (ex.InnerException != null)
-                            sw.WriteLine($"   Inner: {ex.InnerException.Message}");
+                        //sw.WriteLine($"   Error: {ex.Message}");
+                        //if (ex.InnerException != null)
+                        //    sw.WriteLine($"   Inner: {ex.InnerException.Message}");
                     }
                 }
             }
             catch
             {
-                // เงียบไว้ ถ้าเขียน log ไม่ได้
+                
             }
         }
 
